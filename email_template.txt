@@ -1,4 +1,4 @@
-Abuse Report — Unauthorized Email Spoofing of Domain {header_from} from {source_ip}
+Abuse Report — Unauthorized Email Spoofing of Domain {header_from}
 
 My name is {reporter_name}, and I am writing on behalf of {org_name} to report unauthorized use of our domain, {header_from}, originating from IP address(es) registered to your network.
 
@@ -8,7 +8,7 @@ This information is available to use using DMARC reporting, and we do not have e
 
 Offending IP Addresses (your network)
 
-  - {source_ip} (rDNS: {reverse_dns}) — {message_count} messages
+{ip_list}
 
 Sample Envelope-From Domains Used
 

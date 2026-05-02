@@ -19,14 +19,14 @@ pip install -r requirements.txt
 
 ## First-Time Setup
 
-**1. Copy and configure the SMTP config file:**
+**1. Copy and configure the config file:**
 
 ```bash
-cp .smtp_config.example .smtp_config
-chmod 600 .smtp_config
+cp .config.example .config
+chmod 600 .config
 ```
 
-Then edit `.smtp_config` with your mail server details and identity:
+Then edit `.config` with your mail server details and identity. The file has three sections:
 
 ```ini
 [smtp]
@@ -34,14 +34,24 @@ host         = mail.example.com
 port         = 587
 use_starttls = true
 use_ssl      = false
-username     = abuse@example.com
+username     = outbound@example.com
 password     = YOUR_PASSWORD_HERE
-sender_name  = Your Name
-sender_email = abuse@example.com
-org_name     = Your Organisation Name (ASxxxxx)
+sender_name  = DMARC Abuse Reporter
+sender_email = outbound@example.com
+
+[reporter]
+name  = Your Name
+email = abuse@example.com
+org   = Your Organisation Name (ASxxxxx)
+
+[ignore]
+; CIDR prefixes to exclude from reports (one per line, indented)
+prefixes =
 ```
 
-`.smtp_config` is listed in `.gitignore` and will never be accidentally committed. The script checks permissions on POSIX systems and refuses to start if the file is readable by group or others.
+`.config` is listed in `.gitignore` and will never be accidentally committed. The script checks permissions on POSIX systems and refuses to start if the file is readable by group or others.
+
+The `[smtp]` section controls the outbound mail server and the `From:` header. The `[reporter]` section controls your name, contact address, and organisation name as they appear in the email body — these can differ from the SMTP sender. The `[ignore]` section lists CIDR prefixes (IPv4 or IPv6) whose IPs will be silently excluded from all reports.
 
 **To avoid storing the password in the file at all**, leave `password` blank and set the `SMTP_PASSWORD` environment variable instead — it takes precedence:
 
@@ -49,7 +59,7 @@ org_name     = Your Organisation Name (ASxxxxx)
 export SMTP_PASSWORD="yourpassword"
 ```
 
-**2. Edit the email template** (`email_template.txt`) to review the default wording. The `{reporter_name}`, `{org_name}`, and `{contact_email}` placeholders are filled in automatically from `.smtp_config` at runtime — no changes needed unless you want to alter the text itself.
+**2. Edit the email template** (`email_template.txt`) to review the default wording. The `{reporter_name}`, `{org_name}`, and `{contact_email}` placeholders are filled in automatically from `.config` at runtime — no changes needed unless you want to alter the text itself.
 
 ---
 
@@ -97,8 +107,8 @@ dmarc-abuse-reporter/
 ├── email_template.txt            ← edit to customise the abuse email wording
 ├── requirements.txt
 ├── LICENSE
-├── .smtp_config.example          ← committed template — copy this to get started
-├── .smtp_config                  ← your real credentials (gitignored, never committed)
+├── .config.example               ← committed template — copy this to get started
+├── .config                       ← your real credentials (gitignored, never committed)
 ├── .gitignore
 ├── README.md
 ├── AGENTS.md
@@ -131,6 +141,7 @@ Place all three input files in the `reports/` directory before running. The dire
 | `header_from` | Spoofed domain(s), pipe-separated if multiple |
 | `message_count` | Total messages from this IP in the report |
 | `country` | Country code from the source report |
+| `base_domain` | rDNS base domain used as the correlation join key |
 | `reverse_dns` | Live PTR record for the IP (looked up at run time), or `N/A` |
 | `abuse_email` | Abuse contact found via WHOIS, or `UNKNOWN` |
 | `rir` | Regional Internet Registry (ARIN, RIPE, APNIC, etc.) |
@@ -179,9 +190,9 @@ python3 dmarc_reporter.py 2MAY2026 --skip-lookup --dry-run
 
 ## What Happens at Runtime
 
-1. **Startup checks** — the script validates the `date_prefix` argument (rejects path-traversal characters), checks `.smtp_config` file permissions, loads the email template, and tests the SMTP connection before doing any work. In `--dry-run` mode the SMTP test is skipped.
+1. **Startup checks** — the script validates the `date_prefix` argument (rejects path-traversal characters), checks `.config` file permissions, loads the email template, and tests the SMTP connection before doing any work. In `--dry-run` mode the SMTP test is skipped.
 
-2. **Correlation** — the three input CSVs are joined on `source_ip`. Message counts are summed. Envelope senders, SPF results, DKIM domains, and DKIM results are collected as unique sets per IP.
+2. **Correlation** — the three input CSVs are joined on `Base Domain` / `Reverse DNS Base`. Message counts are summed per IP. Envelope senders (stored as `domain:count` pairs), SPF results, DKIM domains, and DKIM results are collected per base domain group.
 
 3. **WHOIS lookup** — for each unique IP, the script attempts to find an abuse contact using three methods in order:
    - RDAP via `ipwhois` (structured, RIR-routed)
@@ -192,20 +203,24 @@ python3 dmarc_reporter.py 2MAY2026 --skip-lookup --dry-run
 
 5. **Full CSV** — all correlated data plus WHOIS/rDNS results are written to `reports/<prefix>_full.csv`.
 
-6. **History check** — any IP found in `reports/Report_History.csv` with a last-reported date within the past 30 days is skipped automatically.
+6. **Filtering** — IPs with a blank spoofed domain (no match in SPF/DKIM files) and IPs falling within any CIDR prefix listed under `[ignore]` in `.config` are removed before the send loop.
 
-7. **Interactive send loop** — for each eligible IP, the script prints a full summary and the complete email body, then prompts:
+7. **History check** — any IP found in `reports/Report_History.csv` with a last-reported date within the past 30 days is skipped automatically.
+
+8. **Consolidation** — eligible IPs are grouped by `(abuse_email, base_domain)`. IPs from the same provider and domain group are combined into a single report so each abuse contact receives one email per domain group rather than one email per IP.
+
+9. **Interactive send loop** — for each consolidated group, the script prints a full summary and the complete email body, then prompts:
 
    ```
    Send report to abuse@example.net? [Y/N]:
    ```
 
-   - **Y** — sends the email (or prints `[DRY RUN]` if `--dry-run`) and records today's date in `Report_History.csv`
-   - **N** — skips this IP (history is not updated, so it will appear again next run)
+   - **Y** — sends the email (or prints `[DRY RUN]` if `--dry-run`) and records today's date in `Report_History.csv` for every IP in the group
+   - **N** — skips this group (history is not updated, so all IPs in the group will appear again next run)
 
    Pressing `Ctrl-C` at any prompt saves history (unless `--dry-run`) and exits cleanly.
 
-8. **Summary** — after all IPs are processed, a count of sent / skipped / failed is printed and `Report_History.csv` is saved atomically.
+10. **Summary** — after all groups are processed, a count of sent / skipped / failed emails is printed and `Report_History.csv` is saved atomically.
 
 ---
 
@@ -224,15 +239,13 @@ Available placeholders:
 | Placeholder | Value |
 |-------------|-------|
 | `{header_from}` | The spoofed domain (first alphabetically if multiple) |
-| `{source_ip}` | The offending IP address |
-| `{reverse_dns}` | PTR record for the IP |
-| `{message_count}` | Total messages seen from this IP |
+| `{ip_list}` | Bulleted list of offending IPs with rDNS and per-IP message counts |
 | `{envelope_senders}` | Bulleted list of envelope-from domains |
-| `{reporter_name}` | Your name (`sender_name` in `.smtp_config`) |
-| `{org_name}` | Your organisation name (`org_name` in `.smtp_config`) |
-| `{contact_email}` | Your abuse contact address (`sender_email` in `.smtp_config`) |
+| `{reporter_name}` | Your name (`name` in `.config` `[reporter]`) |
+| `{org_name}` | Your organisation name (`org` in `.config` `[reporter]`) |
+| `{contact_email}` | Your abuse contact address (`email` in `.config` `[reporter]`) |
 
-The `{reporter_name}`, `{org_name}`, and `{contact_email}` placeholders are sourced from `.smtp_config` automatically — update them there, not by editing the template.
+The `{reporter_name}`, `{org_name}`, and `{contact_email}` placeholders are sourced from `.config` automatically — update them there, not by editing the template.
 
 The script exits with a clear error if the file is missing or the blank-line separator is absent.
 
@@ -256,11 +269,13 @@ source_ip,last_reported_date
 
 ## Adjustable Settings
 
-Identity and credentials live in `.smtp_config`. Everything else is in the `CONFIGURATION` section near the top of `dmarc_reporter.py`:
+Identity, credentials, and ignore prefixes live in `.config`. Everything else is in the `CONFIGURATION` section near the top of `dmarc_reporter.py`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `.smtp_config` | *(see above)* | Mail server, sender identity, and org name |
+| `.config` `[smtp]` | *(see above)* | Mail server and SMTP sender address |
+| `.config` `[reporter]` | *(see above)* | Your name, contact email, and org name (appear in email body) |
+| `.config` `[ignore]` | *(empty)* | CIDR prefixes to exclude from all reports |
 | `REPORTS_DIR` | `reports` | Directory containing all report files |
 | `SOURCE_COLS` / `SPF_COLS` / `DKIM_COLS` | *(see above)* | CSV column name mappings |
 | `REPORT_COOLDOWN_DAYS` | `30` | Days before re-reporting the same IP |
@@ -270,17 +285,17 @@ Identity and credentials live in `.smtp_config`. Everything else is in the `CONF
 
 ## Troubleshooting
 
-**Script exits with "SMTP config file not found"**
-Run `cp .smtp_config.example .smtp_config`, fill in your settings, then run `chmod 600 .smtp_config`.
+**Script exits with "Configuration file not found"**
+Run `cp .config.example .config`, fill in your settings, then run `chmod 600 .config`. If you have a legacy `.smtp_config`, rename it: `mv .smtp_config .config` and add the `[reporter]` section.
 
 **Script exits with "unsafe permissions"**
-Run `chmod 600 .smtp_config`. The script refuses to start if the credentials file is readable by group or others.
+Run `chmod 600 .config`. The script refuses to start if the credentials file is readable by group or others.
 
-**Script exits with "org_name is empty"**
-Add `org_name = Your Organisation Name` to the `[smtp]` section of `.smtp_config`.
+**Script exits with "reporter … is empty"**
+Check that the `[reporter]` section in `.config` has non-empty `name`, `email`, and `org` fields.
 
 **Script exits with "SMTP connection test failed"**
-Check that `host`, `port`, `use_starttls`, and `use_ssl` in `.smtp_config` match your mail server's requirements. Authentication errors mean a wrong username or password. The full error is printed on the line after `FAILED`. Use `--dry-run` to skip the SMTP test while debugging other parts of the workflow.
+Check that `host`, `port`, `use_starttls`, and `use_ssl` in `.config` `[smtp]` match your mail server's requirements. Authentication errors mean a wrong username or password. The full error is printed on the line after `FAILED`. Use `--dry-run` to skip the SMTP test while debugging other parts of the workflow.
 
 **`abuse_email` shows `UNKNOWN` for an IP**
 The WHOIS data for that IP did not contain a recognizable abuse contact. You can manually edit `reports/<prefix>_full.csv` before re-running with `--skip-lookup`, or answer `N` at the prompt to skip that IP.

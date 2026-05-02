@@ -1,0 +1,52 @@
+# .config — DMARC Abuse Reporter configuration
+#
+# Copy this file to .config and fill in your real values.
+# .config is excluded from version control — never commit it.
+# After copying, lock down the permissions:
+#   chmod 600 .config
+#
+# The SMTP password can be left blank here and supplied via environment
+# variable instead:
+#   export SMTP_PASSWORD="yourpassword"
+
+[smtp]
+
+# Mail server hostname or IP address
+host = mail.example.com
+
+# Port: 587 for STARTTLS, 465 for SSL/TLS, 25 for plain/unauthenticated
+port = 587
+
+# Set one of these to true depending on your port; set both false for plain
+use_starttls = true
+use_ssl      = false
+
+# SMTP authentication credentials
+username = outbound@example.com
+password = YOUR_PASSWORD_HERE
+
+# Display name and address used in the From: header of outgoing mail.
+# These can differ from your reporter contact details in [reporter] below.
+sender_name  = DMARC Abuse Reporter
+sender_email = outbound@example.com
+
+[reporter]
+
+# Your name, contact email, and organisation as they appear in the email
+# body and signature. Independent of the SMTP sender address above.
+name  = Your Name
+email = abuse@example.com
+org   = Your Organisation Name (ASxxxxx)
+
+[ignore]
+
+# CIDR prefixes (IPv4 or IPv6) to exclude from abuse reports entirely.
+# One prefix per line, indented. A /32 (or bare IPv4) matches a single
+# host; /128 (or bare IPv6) matches a single IPv6 address.
+#
+# Examples:
+#   prefixes =
+#       192.0.2.0/24
+#       198.51.100.5/32
+#       2001:db8::/32
+prefixes =

@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import csv
+import ipaddress
 import os
 import re
 import smtplib
@@ -53,41 +54,77 @@ except ImportError:
 
 
 # =============================================================================
-# SMTP CONFIG LOADER
+# CONFIG LOADER
 # =============================================================================
 
-SMTP_CONFIG_FILE = Path(__file__).parent / ".smtp_config"
+CONFIG_FILE = Path(__file__).parent / ".config"
 
 
-def load_smtp_config() -> dict:
+def _parse_ignore_prefixes(raw: str) -> list:
+    """Parse a multi-line string of CIDR prefixes into ip_network objects."""
+    networks = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        try:
+            networks.append(ipaddress.ip_network(line, strict=False))
+        except ValueError:
+            print(f"WARNING: Invalid CIDR prefix in .config [ignore]: '{line}' — skipped")
+    return networks
+
+
+def is_ignored(ip_str: str, ignore_prefixes: list) -> bool:
+    """Return True if ip_str falls within any configured ignore prefix."""
+    if not ignore_prefixes:
+        return False
+    try:
+        addr = ipaddress.ip_address(ip_str)
+        return any(addr in net for net in ignore_prefixes)
+    except ValueError:
+        return False
+
+
+def load_config() -> dict:
     """
-    Read SMTP settings from .smtp_config (INI format, [smtp] section).
+    Read all settings from .config (INI format).
+    Sections: [smtp], [reporter], [ignore]
     Aborts with a clear message if the file is missing or malformed.
     The SMTP_PASSWORD environment variable overrides the password field.
     """
-    if not SMTP_CONFIG_FILE.exists():
-        print(f"ERROR: SMTP config file not found: {SMTP_CONFIG_FILE}")
-        print("       Copy .smtp_config.example to .smtp_config and fill in your settings.")
+    if not CONFIG_FILE.exists():
+        old = Path(__file__).parent / ".smtp_config"
+        if old.exists():
+            print(f"ERROR: Configuration file not found: {CONFIG_FILE}")
+            print("       Found legacy .smtp_config — rename it:  mv .smtp_config .config")
+        else:
+            print(f"ERROR: Configuration file not found: {CONFIG_FILE}")
+            print("       Copy .config.example to .config and fill in your settings.")
         sys.exit(1)
 
-    # On POSIX systems refuse to run if the file is readable by group or others.
     if os.name == "posix":
-        mode = SMTP_CONFIG_FILE.stat().st_mode & 0o777
+        mode = CONFIG_FILE.stat().st_mode & 0o777
         if mode & 0o077:
-            print(f"ERROR: .smtp_config has unsafe permissions ({oct(mode)}).")
-            print("       Run:  chmod 600 .smtp_config")
+            print(f"ERROR: .config has unsafe permissions ({oct(mode)}).")
+            print("       Run:  chmod 600 .config")
             sys.exit(1)
 
     cp = configparser.ConfigParser()
-    cp.read(SMTP_CONFIG_FILE)
+    cp.read(CONFIG_FILE)
 
     if "smtp" not in cp:
-        print(f"ERROR: .smtp_config is missing the required [smtp] section.")
+        print("ERROR: .config is missing the required [smtp] section.")
+        sys.exit(1)
+    if "reporter" not in cp:
+        print("ERROR: .config is missing the required [reporter] section.")
+        print("       Add a [reporter] section with name, email, and org fields.")
         sys.exit(1)
 
     s = cp["smtp"]
+    r = cp["reporter"]
     try:
         cfg = {
+            # SMTP connection and auth
             "host":         s.get("host", "").strip(),
             "port":         s.getint("port", 587),
             "use_starttls": s.getboolean("use_starttls", True),
@@ -96,23 +133,34 @@ def load_smtp_config() -> dict:
             "password":     s.get("password", "").strip(),
             "sender_name":  s.get("sender_name", "").strip(),
             "sender_email": s.get("sender_email", "").strip(),
-            "org_name":     s.get("org_name", "").strip(),
+            # Reporter identity (appears in email body and signature)
+            "reporter_name":  r.get("name", "").strip(),
+            "reporter_email": r.get("email", "").strip(),
+            "reporter_org":   r.get("org", "").strip(),
+            # Parsed ignore prefixes
+            "ignore_prefixes": _parse_ignore_prefixes(
+                cp["ignore"].get("prefixes", "") if "ignore" in cp else ""
+            ),
         }
     except (ValueError, configparser.Error) as exc:
-        print(f"ERROR: Could not parse .smtp_config: {exc}")
+        print(f"ERROR: Could not parse .config: {exc}")
         sys.exit(1)
 
-    # Environment variable takes precedence over the config file password
     env_pw = os.environ.get("SMTP_PASSWORD", "").strip()
     if env_pw:
         cfg["password"] = env_pw
 
     if not cfg["host"]:
-        print("ERROR: .smtp_config [smtp] host is empty.")
+        print("ERROR: .config [smtp] host is empty.")
         sys.exit(1)
-
-    if not cfg["org_name"]:
-        print("ERROR: .smtp_config [smtp] org_name is empty.")
+    if not cfg["reporter_name"]:
+        print("ERROR: .config [reporter] name is empty.")
+        sys.exit(1)
+    if not cfg["reporter_email"]:
+        print("ERROR: .config [reporter] email is empty.")
+        sys.exit(1)
+    if not cfg["reporter_org"]:
+        print("ERROR: .config [reporter] org is empty.")
         sys.exit(1)
 
     return cfg
@@ -401,7 +449,7 @@ def save_history(path: Path, history: dict) -> None:
 # =============================================================================
 
 FULL_CSV_FIELDS = [
-    "source_ip", "header_from", "message_count", "country", "reverse_dns",
+    "source_ip", "header_from", "message_count", "country", "base_domain", "reverse_dns",
     "abuse_email", "rir", "org_name", "asn",
     "envelope_senders", "spf_results", "dkim_domains", "dkim_results",
 ]
@@ -522,6 +570,7 @@ def build_full_report(combined: dict) -> list:
             "header_from":      "|".join(header_from_list),
             "message_count":    data["message_count"],
             "country":          data.get("country", ""),
+            "base_domain":      data.get("base_domain", ""),
             "reverse_dns":      c["reverse_dns"],
             "abuse_email":      c["abuse_email"],
             "rir":              c["rir"],
@@ -551,36 +600,32 @@ def _is_valid_email(addr: str) -> bool:
     return bool(re.fullmatch(r"[\w.+\-]+@[\w.\-]+\.\w{2,}", addr))
 
 
-def format_email(row: dict, subject_tmpl: str, body_tmpl: str, cfg: dict) -> tuple:
-    """Return (subject, body) strings for one full-report row."""
-    # Use the first domain alphabetically when multiple header_from values exist
-    header_from = row["header_from"].split("|")[0]
+def format_email(group: dict, subject_tmpl: str, body_tmpl: str, cfg: dict) -> tuple:
+    """Return (subject, body) strings for one consolidated IP group."""
+    header_from = group["header_from"].split("|")[0]
 
-    parsed_senders = []
-    for entry in (s for s in row["envelope_senders"].split("|") if s):
-        if ":" in entry:
-            domain, _, raw_count = entry.rpartition(":")
-            parsed_senders.append((domain, int(raw_count) if raw_count.isdigit() else 0))
-        else:
-            parsed_senders.append((entry, 0))
-    parsed_senders.sort(key=lambda x: -x[1])
-    env_lines = [
-        f"  - {d} ({c} messages)" if c else f"  - {d}"
-        for d, c in parsed_senders
-    ]
+    ip_lines = []
+    for entry in group["ip_entries"]:
+        count = int(entry["message_count"])
+        suffix = "message" if count == 1 else "messages"
+        ip_lines.append(
+            f"  - {entry['source_ip']} (rDNS: {entry['reverse_dns']}) — {count} {suffix}"
+        )
+    ip_list = "\n".join(ip_lines)
+
+    env_lines = []
+    for entry in (s for s in group["envelope_senders"].split("|") if s):
+        domain = entry.rpartition(":")[0] if ":" in entry else entry
+        env_lines.append(f"  - {domain}")
     env_block = "\n".join(env_lines) if env_lines else "  (none recorded)"
 
     values = dict(
-        # Per-IP data from the full CSV
         header_from=header_from,
-        source_ip=row["source_ip"],
-        reverse_dns=row["reverse_dns"],
-        message_count=row["message_count"],
+        ip_list=ip_list,
         envelope_senders=env_block,
-        # Reporter identity from .smtp_config
-        reporter_name=cfg["sender_name"],
-        org_name=cfg["org_name"],
-        contact_email=cfg["sender_email"],
+        reporter_name=cfg["reporter_name"],
+        org_name=cfg["reporter_org"],
+        contact_email=cfg["reporter_email"],
     )
     return subject_tmpl.format(**values), body_tmpl.format(**values)
 
@@ -676,17 +721,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    smtp_cfg              = load_smtp_config()
+    cfg                     = load_config()
     subject_tmpl, body_tmpl = load_email_template(EMAIL_TEMPLATE_FILE)
-    prefix                = args.date_prefix
-    dry_run               = args.dry_run
+    prefix                  = args.date_prefix
+    dry_run                 = args.dry_run
+    ignore_prefixes         = cfg["ignore_prefixes"]
 
     validate_date_prefix(prefix)
 
     if dry_run:
         print("[*] DRY RUN mode — no emails will be sent and history will not be updated")
     else:
-        test_smtp_connection(smtp_cfg)
+        test_smtp_connection(cfg)
 
     rdir      = Path(REPORTS_DIR)
     rdir.mkdir(exist_ok=True)
@@ -734,6 +780,19 @@ def main() -> None:
         print(f"[*] Full report saved: {full_path}")
 
     # -------------------------------------------------------------------------
+    # Filter: blank header_from and configured ignore prefixes
+    # -------------------------------------------------------------------------
+    pre_filter = len(full_rows)
+    full_rows = [
+        r for r in full_rows
+        if r.get("header_from", "").strip()
+        and not is_ignored(r["source_ip"], ignore_prefixes)
+    ]
+    filtered = pre_filter - len(full_rows)
+    if filtered:
+        print(f"[*] Filtered {filtered} row(s) (blank spoofed domain or ignored prefix)")
+
+    # -------------------------------------------------------------------------
     # Filter against report history (skip IPs reported within the cooldown)
     # -------------------------------------------------------------------------
     history = load_history(hist_path)
@@ -766,29 +825,78 @@ def main() -> None:
         print("\n[*] Nothing to report — all IPs are within the cooldown window.")
         return
 
-    print(f"\n[*] {len(to_report)} IP(s) eligible for abuse reports")
+    # -------------------------------------------------------------------------
+    # Consolidate: group eligible IPs by (abuse_email, base_domain) so that
+    # each provider receives one email per domain group rather than one per IP.
+    # The base_domain fallback to source_ip ensures old CSVs (pre-base_domain
+    # field) still work — each IP gets its own group.
+    # -------------------------------------------------------------------------
+    groups: dict = defaultdict(list)
+    for row in to_report:
+        base_domain = row.get("base_domain", "").strip() or row["source_ip"]
+        key = (row.get("abuse_email", "UNKNOWN"), base_domain)
+        groups[key].append(row)
+
+    consolidated = []
+    for (abuse_email, base_domain), rows in groups.items():
+        first = rows[0]
+        consolidated.append({
+            "abuse_email":      abuse_email,
+            "base_domain":      base_domain,
+            "header_from":      first["header_from"],
+            "envelope_senders": first["envelope_senders"],
+            "spf_results":      first.get("spf_results", ""),
+            "dkim_domains":     first.get("dkim_domains", ""),
+            "dkim_results":     first.get("dkim_results", ""),
+            "org_name":         first.get("org_name", "UNKNOWN"),
+            "rir":              first.get("rir", "UNKNOWN"),
+            "asn":              first.get("asn", "UNKNOWN"),
+            "ip_entries": [
+                {
+                    "source_ip":     r["source_ip"],
+                    "reverse_dns":   r.get("reverse_dns", "N/A"),
+                    "message_count": r.get("message_count", 0),
+                }
+                for r in rows
+            ],
+            "total_message_count": sum(
+                int(r.get("message_count", 0)) for r in rows
+            ),
+        })
+
+    ip_count = sum(len(g["ip_entries"]) for g in consolidated)
+    if ip_count > len(consolidated):
+        print(
+            f"\n[*] {ip_count} eligible IP(s) consolidated into "
+            f"{len(consolidated)} report(s)"
+        )
+    else:
+        print(f"\n[*] {len(consolidated)} report(s) ready")
 
     # -------------------------------------------------------------------------
-    # Interactive confirmation and send loop — one email per IP
+    # Interactive confirmation and send loop — one email per consolidated group
     # -------------------------------------------------------------------------
     sent = skipped_by_user = failed = 0
     SEP  = "=" * 72
     DASH = "-" * 72
 
-    for row in to_report:
-        ip          = row["source_ip"]
-        abuse_email = row.get("abuse_email", "UNKNOWN")
+    for group in consolidated:
+        abuse_email = group["abuse_email"]
+        ip_entries  = group["ip_entries"]
 
-        subject, body = format_email(row, subject_tmpl, body_tmpl, smtp_cfg)
+        subject, body = format_email(group, subject_tmpl, body_tmpl, cfg)
 
         print(f"\n{SEP}")
-        print(f"  IP Address   : {ip}")
-        print(f"  rDNS         : {row.get('reverse_dns', 'N/A')}")
-        print(f"  Organization : {row.get('org_name', 'N/A')}")
-        print(f"  RIR          : {row.get('rir', 'N/A')}")
-        print(f"  ASN          : {row.get('asn', 'N/A')}")
-        print(f"  Domain(s)    : {row.get('header_from', 'N/A')}")
-        print(f"  Messages     : {row.get('message_count', 'N/A')}")
+        print(f"  IPs:")
+        for entry in ip_entries:
+            count = int(entry["message_count"])
+            suffix = "message" if count == 1 else "messages"
+            print(f"    {entry['source_ip']} (rDNS: {entry['reverse_dns']}) — {count} {suffix}")
+        print(f"  Organization : {group.get('org_name', 'N/A')}")
+        print(f"  RIR          : {group.get('rir', 'N/A')}")
+        print(f"  ASN          : {group.get('asn', 'N/A')}")
+        print(f"  Domain(s)    : {group.get('header_from', 'N/A')}")
+        print(f"  Total Msgs   : {group['total_message_count']}")
         print(f"  Abuse Email  : {abuse_email}")
         print(f"  Subject      : {subject}")
         print(DASH)
@@ -796,7 +904,7 @@ def main() -> None:
         print(SEP)
 
         if abuse_email == "UNKNOWN":
-            print("  [!] WARNING: No abuse contact found for this IP.")
+            print("  [!] WARNING: No abuse contact found.")
 
         while True:
             try:
@@ -816,10 +924,11 @@ def main() -> None:
                 print(f"  [DRY RUN] Would send to {abuse_email} — skipped")
                 sent += 1
             else:
-                ok, err = send_email(abuse_email, subject, body, smtp_cfg)
+                ok, err = send_email(abuse_email, subject, body, cfg)
                 if ok:
                     print(f"  [+] Sent successfully to {abuse_email}")
-                    history[ip] = datetime.now()
+                    for entry in ip_entries:
+                        history[entry["source_ip"]] = datetime.now()
                     sent += 1
                 else:
                     print(f"  [!] Send FAILED: {err}")

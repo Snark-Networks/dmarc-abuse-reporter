@@ -88,17 +88,30 @@ Do not collapse or reorder this strategy. The tiered approach is intentional —
 
 ## Configuration Locations
 
-**SMTP credentials and reporter identity** — `.smtp_config` (INI format, `[smtp]` section). Gitignored, never committed. `.smtp_config.example` is the committed template. Edit `.smtp_config` only; do not put credentials or identity back into the script.
+**All credentials, identity, and ignore rules** — `.config` (INI format, three sections). Gitignored, never committed. `.config.example` is the committed template. Edit `.config` only; do not put credentials or identity back into the script.
 
-Fields:
+`[smtp]` fields:
 
 | Key | Purpose |
 |-----|---------|
 | `host`, `port`, `use_starttls`, `use_ssl` | Mail server connection |
 | `username`, `password` | SMTP auth (`SMTP_PASSWORD` env var overrides `password`) |
-| `sender_name` | Maps to `{reporter_name}` in the email template |
-| `sender_email` | Maps to `{contact_email}` in the email template; also used as SMTP envelope From |
-| `org_name` | Maps to `{org_name}` in the email template |
+| `sender_name` | Display name in the outgoing `From:` header |
+| `sender_email` | SMTP envelope From address |
+
+`[reporter]` fields (appear in the email body and signature):
+
+| Key | Purpose |
+|-----|---------|
+| `name` | Maps to `{reporter_name}` in the email template |
+| `email` | Maps to `{contact_email}` in the email template |
+| `org` | Maps to `{org_name}` in the email template |
+
+`[ignore]` fields:
+
+| Key | Purpose |
+|-----|---------|
+| `prefixes` | Multi-line list of CIDR prefixes (IPv4 or IPv6) to exclude from all reports |
 
 **All other settings** — `CONFIGURATION` section of `dmarc_reporter.py`:
 
@@ -119,16 +132,14 @@ The template lives in `email_template.txt` (project root, committed to version c
 
 | Placeholder | Source |
 |-------------|--------|
-| `{header_from}` | First (alphabetically) domain in `row["header_from"]` |
-| `{source_ip}` | `row["source_ip"]` |
-| `{reverse_dns}` | rDNS lookup result |
-| `{message_count}` | Aggregated count from source CSV |
-| `{envelope_senders}` | Formatted bulleted list built in `format_email()` |
-| `{reporter_name}` | `cfg["sender_name"]` from `.smtp_config` |
-| `{org_name}` | `cfg["org_name"]` from `.smtp_config` |
-| `{contact_email}` | `cfg["sender_email"]` from `.smtp_config` |
+| `{header_from}` | First (alphabetically) domain in `group["header_from"]` |
+| `{ip_list}` | Formatted bulleted list of IPs with rDNS and per-IP counts, built in `format_email()` |
+| `{envelope_senders}` | Formatted bulleted list of envelope-from domains (domain names only, no counts) |
+| `{reporter_name}` | `cfg["reporter_name"]` from `.config` `[reporter]` `name` |
+| `{org_name}` | `cfg["reporter_org"]` from `.config` `[reporter]` `org` |
+| `{contact_email}` | `cfg["reporter_email"]` from `.config` `[reporter]` `email` |
 
-To change wording, edit `email_template.txt` only. To change reporter identity, edit `.smtp_config` only. Do not rename or remove any placeholder without also updating `format_email()`, which passes all eight values unconditionally via `**values`.
+`format_email()` now receives a consolidated `group` dict (not a single CSV row). The group has an `ip_entries` list of `{source_ip, reverse_dns, message_count}` dicts used to build `{ip_list}`. To change wording, edit `email_template.txt` only. To change reporter identity, edit `.config` only. Do not rename or remove any placeholder without also updating `format_email()`.
 
 ---
 
@@ -147,7 +158,10 @@ Dates are stored as `YYYY-MM-DD`. The file is read by `load_history()` and writt
 ## Common Tasks
 
 **Operator wants to change SMTP settings or reporter identity**
-Edit `.smtp_config`. Do not put credentials or identity fields back into the script. Remember to run `chmod 600 .smtp_config` after editing.
+Edit `.config`. SMTP connection/auth fields are in `[smtp]`; reporter name, email, and org are in `[reporter]`. Do not put credentials or identity fields back into the script. Remember to run `chmod 600 .config` after editing.
+
+**Operator wants to exclude specific IPs or networks from reports**
+Add CIDR prefixes to the `prefixes` key under `[ignore]` in `.config`, one per line (indented). A `/32` or bare IPv4 address excludes a single host; `/24` excludes a /24 block. IPv6 works the same way.
 
 **Operator wants to test the workflow without sending real emails**
 Run with `--dry-run`. All lookups, CSV output, prompts, and email previews behave normally; only the actual `sendmail` call and history update are suppressed.
@@ -156,7 +170,7 @@ Run with `--dry-run`. All lookups, CSV output, prompts, and email previews behav
 Edit `REPORT_COOLDOWN_DAYS` in the configuration block.
 
 **Operator wants to adjust the email body or subject**
-Edit `email_template.txt`. No script changes needed. The first line is the subject; everything after the first blank line is the body. Keep all eight `{placeholder}` names intact, or update `format_email()` accordingly.
+Edit `email_template.txt`. No script changes needed. The first line is the subject; everything after the first blank line is the body. Keep all six `{placeholder}` names intact, or update `format_email()` accordingly.
 
 **Operator's DMARC tool uses different CSV column names**
 Update the right-hand values in `SOURCE_COLS`, `SPF_COLS`, and/or `DKIM_COLS`. The left-hand keys are internal names used by the script and must not change. The join is on `source["Base Domain"]` == `spf/dkim["Reverse DNS Base"]`; if those column names change, update both `SOURCE_COLS["base_domain"]` and `SPF_COLS["reverse_dns_base"]` / `DKIM_COLS["reverse_dns_base"]` together.
@@ -177,8 +191,8 @@ In `send_email()`, change `MIMEText(body, "plain", "utf-8")` to `MIMEText(html_b
 - Do not add a database, ORM, or message queue. CSV files are the intentional persistence layer.
 - Do not add async/await. WHOIS queries are rate-limited by design; concurrency would defeat that.
 - Do not add a web UI or REST API. This is a CLI tool run manually by the operator.
-- Do not rename or reorder the `FULL_CSV_FIELDS` list without also updating every place that writes or reads the full CSV: `build_full_report()` (builds the row dicts, currently includes `country`), the inline `csv.DictWriter` block in `main()` (writes the file), `format_email()` (reads fields by name), and the `--skip-lookup` reload path (reads the CSV back into dicts).
+- Do not rename or reorder the `FULL_CSV_FIELDS` list without also updating every place that writes or reads the full CSV: `build_full_report()` (builds the row dicts, currently includes `country` and `base_domain`), the inline `csv.DictWriter` block in `main()` (writes the file), the consolidation grouping in `main()` (reads `base_domain`), and the `--skip-lookup` reload path (reads the CSV back into dicts).
 - Do not add retries with exponential backoff to WHOIS without operator approval — hammering RIR servers risks IP-level rate limiting.
 - Do not weaken the input validation in `validate_date_prefix()` or the header sanitization in `_sanitize_header()` / `_is_valid_email()` without operator approval.
-- Do not remove the `.smtp_config` permissions check — it is a deliberate security gate, not defensive boilerplate.
-- Do not move `reporter_name`, `org_name`, or `contact_email` back into the script or template as hardcoded values — they belong in `.smtp_config`.
+- Do not remove the `.config` permissions check — it is a deliberate security gate, not defensive boilerplate.
+- Do not move `reporter_name`, `org_name`, or `contact_email` back into the script or template as hardcoded values — they belong in `.config` `[reporter]`.
