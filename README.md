@@ -1,6 +1,6 @@
 # DMARC Abuse Reporter
 
-Parses DMARC aggregate report exports, performs WHOIS and reverse-DNS lookups, builds a correlated full report, and sends abuse notification emails to network operators — one email per offending source IP, with interactive confirmation before each send.
+Parses DMARC aggregate report exports, performs WHOIS and reverse-DNS lookups, builds a correlated full report, and sends abuse notification emails to network operators — one email per abuse contact, consolidating all offending IPs, with interactive confirmation before each send.
 
 ---
 
@@ -26,7 +26,7 @@ cp .config.example .config
 chmod 600 .config
 ```
 
-Then edit `.config` with your mail server details and identity. The file has three sections:
+Then edit `.config` with your mail server details and identity. The two required sections are `[smtp]` and `[reporter]`; the remaining sections are optional and have built-in defaults:
 
 ```ini
 [smtp]
@@ -207,7 +207,7 @@ python3 dmarc_reporter.py 2MAY2026 --skip-lookup --dry-run
 
 6. **Filtering** — IPs with a blank spoofed domain (no match in SPF/DKIM files) and IPs falling within any CIDR prefix listed under `[ignore]` in `.config` are removed before the send loop.
 
-7. **History check** — any IP found in `reports/Report_History.csv` with a last-reported date within the past 30 days is skipped automatically.
+7. **History check** — any IP found in `reports/Report_History.csv` with a last-reported date within the cooldown window (default 30 days, configurable via `[settings]` `cooldown_days`) is skipped automatically.
 
 8. **Consolidation** — eligible IPs are grouped by `abuse_email`. All IPs from the same abuse contact are combined into a single report regardless of which base domains they span, so each abuse contact receives exactly one email per run.
 
@@ -264,8 +264,8 @@ source_ip,last_reported_date
 
 - Created automatically on the first run.
 - Updated only when an email is successfully sent (not when skipped by the user).
-- IPs with a `last_reported_date` within the past 30 days are silently skipped before the interactive loop begins.
-- The cooldown period can be changed by editing `REPORT_COOLDOWN_DAYS` at the top of the script.
+- IPs with a `last_reported_date` within the cooldown window are silently skipped before the interactive loop begins.
+- The cooldown period is set by `cooldown_days` under `[settings]` in `.config` (default: 30 days).
 
 ---
 
@@ -308,7 +308,7 @@ The WHOIS data for that IP did not contain a recognizable abuse contact. You can
 The abuse contact returned by WHOIS failed basic validation (likely garbage data or a placeholder). Edit the `abuse_email` field in the full CSV and re-run with `--skip-lookup`.
 
 **Script exits immediately with "Nothing to report"**
-All IPs in the report are within the 30-day cooldown window. Check `reports/Report_History.csv` to confirm, or manually remove rows if you need to re-report an IP sooner.
+All IPs in the report are within the cooldown window. Check `reports/Report_History.csv` to confirm, or manually remove rows if you need to re-report an IP sooner.
 
 **`dig` not found**
 Install `bind-utils` (RHEL/CentOS) or `dnsutils` (Debian/Ubuntu). The script falls back to Python's `socket.gethostbyaddr()` automatically if `dig` is unavailable, so this is not fatal.

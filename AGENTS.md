@@ -13,7 +13,7 @@ This is a single-script Python tool (`dmarc_reporter.py`) that automates the abu
 3. Performs WHOIS and reverse-DNS lookups for each source IP
 4. Writes a correlated full report CSV
 5. Cross-references a persistent report history to enforce a 30-day cooldown per IP
-6. Presents each eligible IP interactively and sends one plain-text abuse email per IP on confirmation
+6. Consolidates eligible IPs by abuse contact and sends one plain-text abuse email per contact on interactive confirmation
 
 The operator is **Chris Hesselrode** at **Snark Networks / Snark Holding Corp. (AS62787)**. The abuse contact is `abuse@snarknetworks.com`.
 
@@ -64,11 +64,11 @@ Do not collapse or reorder this strategy. The tiered approach is intentional —
 
 **History writes are atomic.** `save_history()` writes to `Report_History.tmp` then calls `Path.replace()` (atomic on POSIX, best-effort on Windows). This prevents a truncated history file if the process is killed mid-write.
 
-**Multi-valued CSV fields are pipe-separated (`|`).** `envelope_senders`, `spf_results`, `dkim_domains`, `dkim_results`, and `header_from` (when an IP spoofs multiple domains) are stored as `|`-delimited strings in the full CSV. The `format_email()` function splits on `|` before rendering the template. `envelope_senders` uses a `domain:count` encoding (e.g. `spammer.net:142|other.com:7`) so per-sender message counts are preserved; `format_email()` parses these, sorts by count descending, and renders each as `"  - domain (N messages)"` in the email body.
+**Multi-valued CSV fields are pipe-separated (`|`).** `envelope_senders`, `spf_results`, `dkim_domains`, `dkim_results`, and `header_from` (when an IP spoofs multiple domains) are stored as `|`-delimited strings in the full CSV. The `format_email()` function splits on `|` before rendering the template. `envelope_senders` in the full CSV uses a `domain:count` encoding (e.g. `spammer.net:142|other.com:7`) so per-sender message counts are preserved at the data layer; during consolidation the counts are stripped and the consolidated group stores only the domain names, which `format_email()` renders as `"  - domain"` lines in the email body.
 
 **`header_from` in the email template uses the first domain alphabetically** when multiple are present for one IP. This is a simplification; a future enhancement could send separate emails per domain.
 
-**Credentials and identity live in `.config`, not the script.** `load_config()` reads the INI file (sections: `[smtp]`, `[reporter]`, `[ignore]`) at the start of `main()` and returns a `cfg` dict passed to `send_email()` and `format_email()`. `[smtp]` fields: `host`, `port`, `use_starttls`, `use_ssl`, `username`, `password`, `sender_name`, `sender_email`. `[reporter]` fields: `reporter_name`, `reporter_email`, `reporter_org`. The `SMTP_PASSWORD` environment variable overrides the password field. The sentinel check `password != "YOUR_PASSWORD_HERE"` skips auth if the example value was left unchanged.
+**All settings live in `.config`, not the script.** `load_config()` reads the INI file (required sections: `[smtp]`, `[reporter]`; optional: `[ignore]`, `[settings]`, `[source_cols]`, `[spf_cols]`, `[dkim_cols]`) at the start of `main()` and returns a `cfg` dict passed to `send_email()`, `format_email()`, `correlate()`, and `build_full_report()`. `[smtp]` fields: `host`, `port`, `use_starttls`, `use_ssl`, `username`, `password`, `sender_name`, `sender_email`. `[reporter]` fields: `reporter_name`, `reporter_email`, `reporter_org`. The `SMTP_PASSWORD` environment variable overrides the password field. The sentinel check `password != "YOUR_PASSWORD_HERE"` skips auth if the example value was left unchanged.
 
 **`.config` permissions are enforced on POSIX.** `load_config()` checks `st_mode & 0o077`; if any group or other bits are set it prints a `chmod 600` reminder and exits. This check is skipped on Windows (`os.name != "posix"`).
 

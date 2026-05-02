@@ -248,8 +248,8 @@ def load_email_template(path: Path) -> tuple:
         Line 2:  blank separator
         Line 3+: body    (supports {placeholder} substitution)
 
-    Available placeholders: {header_from}, {source_ip}, {reverse_dns},
-                            {message_count}, {envelope_senders}
+    Available placeholders: {header_from}, {ip_list}, {envelope_senders},
+                            {reporter_name}, {org_name}, {contact_email}
 
     Exits with an error if the file is missing or improperly formatted.
     """
