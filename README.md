@@ -210,7 +210,7 @@ python3 dmarc_reporter.py 2MAY2026 --skip-lookup --dry-run
 
 7. **History check** — any IP found in `reports/Report_History.csv` with a last-reported date within the past 30 days is skipped automatically.
 
-8. **Consolidation** — eligible IPs are grouped by `(abuse_email, base_domain)`. IPs from the same provider and domain group are combined into a single report so each abuse contact receives one email per domain group rather than one email per IP.
+8. **Consolidation** — eligible IPs are grouped by `abuse_email`. All IPs from the same abuse contact are combined into a single report regardless of which base domains they span, so each abuse contact receives exactly one email per run.
 
 9. **Interactive send loop** — for each consolidated group, the script prints a full summary and the complete email body, then prompts:
 

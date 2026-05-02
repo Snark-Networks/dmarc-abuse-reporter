@@ -58,7 +58,7 @@ There is no package structure, no tests directory, and no build system. Keep it 
 
 Do not collapse or reorder this strategy. The tiered approach is intentional — RDAP is most reliable but some networks only respond to legacy whois.
 
-**One email per source IP, not per abuse contact.** If multiple IPs map to the same abuse address, they each get a separate email. This is deliberate per operator preference.
+**One email per abuse contact.** All eligible IPs that share the same `abuse_email` are combined into a single consolidated report, regardless of how many base domains those IPs span. This means a provider whose IPs appear under several different rDNS base domains receives exactly one email per run.
 
 **History is updated only on successful send.** A user answering N at the prompt does not update `Report_History.csv`. The IP will reappear on the next run. This is correct behavior.
 

@@ -614,8 +614,7 @@ def format_email(group: dict, subject_tmpl: str, body_tmpl: str, cfg: dict) -> t
     ip_list = "\n".join(ip_lines)
 
     env_lines = []
-    for entry in (s for s in group["envelope_senders"].split("|") if s):
-        domain = entry.rpartition(":")[0] if ":" in entry else entry
+    for domain in (s.strip() for s in group["envelope_senders"].split("|") if s.strip()):
         env_lines.append(f"  - {domain}")
     env_block = "\n".join(env_lines) if env_lines else "  (none recorded)"
 
@@ -826,28 +825,54 @@ def main() -> None:
         return
 
     # -------------------------------------------------------------------------
-    # Consolidate: group eligible IPs by (abuse_email, base_domain) so that
-    # each provider receives one email per domain group rather than one per IP.
-    # The base_domain fallback to source_ip ensures old CSVs (pre-base_domain
-    # field) still work — each IP gets its own group.
+    # Consolidate: group eligible IPs by abuse_email so that each abuse
+    # contact receives exactly one email listing all their IPs, regardless
+    # of how many base domains those IPs span.
     # -------------------------------------------------------------------------
     groups: dict = defaultdict(list)
     for row in to_report:
-        base_domain = row.get("base_domain", "").strip() or row["source_ip"]
-        key = (row.get("abuse_email", "UNKNOWN"), base_domain)
+        key = row.get("abuse_email", "UNKNOWN")
         groups[key].append(row)
 
     consolidated = []
-    for (abuse_email, base_domain), rows in groups.items():
+    for abuse_email, rows in groups.items():
         first = rows[0]
+        # Union all multi-valued fields across every row in this group.
+        header_from_set    = set()
+        env_sender_domains = set()
+        spf_results_set    = set()
+        dkim_domains_set   = set()
+        dkim_results_set   = set()
+        for r in rows:
+            for v in r.get("header_from", "").split("|"):
+                v = v.strip()
+                if v:
+                    header_from_set.add(v)
+            for entry in r.get("envelope_senders", "").split("|"):
+                entry = entry.strip()
+                if entry:
+                    domain = entry.rpartition(":")[0] if ":" in entry else entry
+                    if domain:
+                        env_sender_domains.add(domain)
+            for v in r.get("spf_results", "").split("|"):
+                v = v.strip()
+                if v:
+                    spf_results_set.add(v)
+            for v in r.get("dkim_domains", "").split("|"):
+                v = v.strip()
+                if v:
+                    dkim_domains_set.add(v)
+            for v in r.get("dkim_results", "").split("|"):
+                v = v.strip()
+                if v:
+                    dkim_results_set.add(v)
         consolidated.append({
             "abuse_email":      abuse_email,
-            "base_domain":      base_domain,
-            "header_from":      first["header_from"],
-            "envelope_senders": first["envelope_senders"],
-            "spf_results":      first.get("spf_results", ""),
-            "dkim_domains":     first.get("dkim_domains", ""),
-            "dkim_results":     first.get("dkim_results", ""),
+            "header_from":      "|".join(sorted(header_from_set)),
+            "envelope_senders": "|".join(sorted(env_sender_domains)),
+            "spf_results":      "|".join(sorted(spf_results_set)),
+            "dkim_domains":     "|".join(sorted(dkim_domains_set)),
+            "dkim_results":     "|".join(sorted(dkim_results_set)),
             "org_name":         first.get("org_name", "UNKNOWN"),
             "rir":              first.get("rir", "UNKNOWN"),
             "asn":              first.get("asn", "UNKNOWN"),
