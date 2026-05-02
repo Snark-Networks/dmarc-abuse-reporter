@@ -22,7 +22,7 @@ The operator is **Chris Hesselrode** at **Snark Networks / Snark Holding Corp. (
 ## Repository Layout
 
 ```
-pdm-abuse2/
+dmarc-abuse-reporter/
 ├── dmarc_reporter.py       ← the entire tool; all logic lives here
 ├── email_template.txt      ← abuse email subject + body; edit freely, no script changes needed
 ├── requirements.txt        ← pip dependencies (ipwhois>=1.3.0)

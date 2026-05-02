@@ -92,7 +92,7 @@ The join key is `source["Base Domain"]` matched against `spf["Reverse DNS Base"]
 ## File Layout
 
 ```
-pdm-abuse2/
+dmarc-abuse-reporter/
 ├── dmarc_reporter.py
 ├── email_template.txt            ← edit to customise the abuse email wording
 ├── requirements.txt
