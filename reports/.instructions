@@ -1,0 +1,18 @@
+This directory holds all input, output, and history files for dmarc_reporter.py.
+
+INPUT FILES — place these here before running the script:
+  <prefix>_source.csv     Source IP addresses, message counts, header-from domains,
+                          and DMARC dispositions exported from your reporting tool.
+  <prefix>_spf.csv        SPF results per source IP (envelope-from, spf_result).
+  <prefix>_dkim.csv       DKIM results per source IP (dkim_domain, dkim_result).
+
+  The prefix is the date string you pass on the command line, e.g. 2MAY2026.
+
+OUTPUT FILES — written by the script:
+  <prefix>_full.csv       Correlated report: all three input files joined on source_ip,
+                          enriched with rDNS and WHOIS data (abuse email, RIR, org, ASN).
+  Report_History.csv      Persistent record of the last date each IP was reported.
+                          Used to enforce the 30-day cooldown between reports for the
+                          same IP. Created automatically on the first run.
+
+NOTE: All *.csv files are excluded from version control. Only this file is committed.

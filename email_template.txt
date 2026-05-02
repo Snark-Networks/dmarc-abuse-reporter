@@ -1,0 +1,31 @@
+Abuse Report — Unauthorized Email Spoofing of Domain {header_from} from {source_ip}
+
+My name is {reporter_name}, and I am writing on behalf of {org_name} to report unauthorized use of our domain, {header_from}, originating from IP address(es) registered to your network.
+
+Summary of the Issue
+
+This information is available to use using DMARC reporting, and we do not have e-mail headers to share. We are notified of these messages by receiving networks. We have observed email messages in which our domain {header_from} appears in the message Header From field, but the messages did not originate from any mail infrastructure operated or authorized by us. SPF and/or DKIM alignment fails for {header_from} and has resulted in these messages failing our DMARC. This is consistent with domain spoofing or header-from forgery being used as part of an unauthorized bulk mailing operation.
+
+Offending IP Addresses (your network)
+
+  - {source_ip} (rDNS: {reverse_dns}) — {message_count} messages
+
+Sample Envelope-From Domains Used
+
+These domains were used as the envelope sender in conjunction with the spoofed {header_from} header-from. They appear to be third-party or compromised domains:
+
+{envelope_senders}
+
+What We Are Requesting
+
+1. Investigate the above IP addresses for unauthorized mail relay, spam, or compromised account activity.
+2. Take appropriate action to stop further email being sent that spoofs the {header_from} domain from your infrastructure.
+3. Notify us at {contact_email} of the results of your investigation and actions taken.
+
+Thank you for your prompt attention to this matter.
+
+Regards,
+
+{reporter_name}
+{org_name}
+{contact_email}

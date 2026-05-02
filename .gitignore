@@ -1,0 +1,26 @@
+# SMTP credentials — never commit
+.smtp_config
+
+# Report data — may contain sensitive IP/WHOIS/abuse-contact information
+reports/*.csv
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# macOS metadata
+.DS_Store
+
+# Editor directories
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Agent Resume Info
+.agent_resume
