@@ -191,7 +191,7 @@ In `send_email()`, change `MIMEText(body, "plain", "utf-8")` to `MIMEText(html_b
 - Do not add a database, ORM, or message queue. CSV files are the intentional persistence layer.
 - Do not add async/await. WHOIS queries are rate-limited by design; concurrency would defeat that.
 - Do not add a web UI or REST API. This is a CLI tool run manually by the operator.
-- Do not rename or reorder the `FULL_CSV_FIELDS` list without also updating every place that writes or reads the full CSV: `build_full_report()` (builds the row dicts, currently includes `country` and `base_domain`), the inline `csv.DictWriter` block in `main()` (writes the file), the consolidation grouping in `main()` (reads `base_domain`), and the `--skip-lookup` reload path (reads the CSV back into dicts).
+- Do not rename or reorder the `FULL_CSV_FIELDS` list without also updating every place that writes or reads the full CSV: `build_full_report()` (builds the row dicts, currently includes `country` and `base_domain`), the inline `csv.DictWriter` block in `main()` (writes the file), and the `--skip-lookup` reload path (reads the CSV back into dicts).
 - Do not add retries with exponential backoff to WHOIS without operator approval — hammering RIR servers risks IP-level rate limiting.
 - Do not weaken the input validation in `validate_date_prefix()` or the header sanitization in `_sanitize_header()` / `_is_valid_email()` without operator approval.
 - Do not remove the `.config` permissions check — it is a deliberate security gate, not defensive boilerplate.
