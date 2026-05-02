@@ -64,7 +64,7 @@ Do not collapse or reorder this strategy. The tiered approach is intentional —
 
 **History writes are atomic.** `save_history()` writes to `Report_History.tmp` then calls `Path.replace()` (atomic on POSIX, best-effort on Windows). This prevents a truncated history file if the process is killed mid-write.
 
-**Multi-valued CSV fields are pipe-separated (`|`).** `envelope_senders`, `spf_results`, `dkim_domains`, `dkim_results`, and `header_from` (when an IP spoofs multiple domains) are stored as `|`-delimited strings in the full CSV. The `format_email()` function splits on `|` before rendering the template.
+**Multi-valued CSV fields are pipe-separated (`|`).** `envelope_senders`, `spf_results`, `dkim_domains`, `dkim_results`, and `header_from` (when an IP spoofs multiple domains) are stored as `|`-delimited strings in the full CSV. The `format_email()` function splits on `|` before rendering the template. `envelope_senders` uses a `domain:count` encoding (e.g. `spammer.net:142|other.com:7`) so per-sender message counts are preserved; `format_email()` parses these, sorts by count descending, and renders each as `"  - domain (N messages)"` in the email body.
 
 **`header_from` in the email template uses the first domain alphabetically** when multiple are present for one IP. This is a simplification; a future enhancement could send separate emails per domain.
 
@@ -73,6 +73,8 @@ Do not collapse or reorder this strategy. The tiered approach is intentional —
 **`.smtp_config` permissions are enforced on POSIX.** After loading, `load_smtp_config()` checks `st_mode & 0o077`; if any group or other bits are set it prints a `chmod 600` reminder and exits. This check is skipped on Windows (`os.name != "posix"`).
 
 **All values placed in RFC2822 headers are sanitized.** `_sanitize_header()` strips `\r` and `\n` before any value is assigned to `msg["To"]`, `msg["From"]`, or `msg["Subject"]`. `send_email()` additionally calls `_is_valid_email()` on the `To` address and returns an error tuple (rather than attempting the send) if it fails.
+
+**Correlation joins on `Base Domain` / `Reverse DNS Base`, not on IP.** The SPF and DKIM CSV exports contain no IP address column; the join key is `source["Base Domain"]` matched against `spf["Reverse DNS Base"]` and `dkim["Reverse DNS Base"]`. `header_from` (the spoofed domain) is extracted from SPF/DKIM rows, not from the source file. `country` is carried from the source file. A live rDNS lookup is still performed for each IP even though `_source.csv` includes a `Reverse DNS` column, because PTR records can change.
 
 **`date_prefix` is validated against a strict allowlist.** `validate_date_prefix()` accepts only `[A-Za-z0-9_\-]+`. This prevents path traversal (e.g. `../../etc/passwd`) via the argument that is interpolated into file paths.
 
@@ -157,7 +159,7 @@ Edit `REPORT_COOLDOWN_DAYS` in the configuration block.
 Edit `email_template.txt`. No script changes needed. The first line is the subject; everything after the first blank line is the body. Keep all eight `{placeholder}` names intact, or update `format_email()` accordingly.
 
 **Operator's DMARC tool uses different CSV column names**
-Update the right-hand values in `SOURCE_COLS`, `SPF_COLS`, and/or `DKIM_COLS`. The left-hand keys are internal names used by the script and must not change.
+Update the right-hand values in `SOURCE_COLS`, `SPF_COLS`, and/or `DKIM_COLS`. The left-hand keys are internal names used by the script and must not change. The join is on `source["Base Domain"]` == `spf/dkim["Reverse DNS Base"]`; if those column names change, update both `SOURCE_COLS["base_domain"]` and `SPF_COLS["reverse_dns_base"]` / `DKIM_COLS["reverse_dns_base"]` together.
 
 **An IP's abuse contact was not found (shows UNKNOWN) or fails the email validation check**
 The operator can manually edit the `abuse_email` field in `_full.csv` and re-run with `--skip-lookup`. Alternatively, extend `_parse_abuse_email()` to handle a new whois field pattern for the specific RIR.
@@ -175,7 +177,7 @@ In `send_email()`, change `MIMEText(body, "plain", "utf-8")` to `MIMEText(html_b
 - Do not add a database, ORM, or message queue. CSV files are the intentional persistence layer.
 - Do not add async/await. WHOIS queries are rate-limited by design; concurrency would defeat that.
 - Do not add a web UI or REST API. This is a CLI tool run manually by the operator.
-- Do not rename or reorder the `FULL_CSV_FIELDS` list without also updating every place that writes or reads the full CSV: `build_full_report()` (builds the row dicts), the inline `csv.DictWriter` block in `main()` (writes the file), `format_email()` (reads fields by name), and the `--skip-lookup` reload path (reads the CSV back into dicts).
+- Do not rename or reorder the `FULL_CSV_FIELDS` list without also updating every place that writes or reads the full CSV: `build_full_report()` (builds the row dicts, currently includes `country`), the inline `csv.DictWriter` block in `main()` (writes the file), `format_email()` (reads fields by name), and the `--skip-lookup` reload path (reads the CSV back into dicts).
 - Do not add retries with exponential backoff to WHOIS without operator approval — hammering RIR servers risks IP-level rate limiting.
 - Do not weaken the input validation in `validate_date_prefix()` or the header sanitization in `_sanitize_header()` / `_is_valid_email()` without operator approval.
 - Do not remove the `.smtp_config` permissions check — it is a deliberate security gate, not defensive boilerplate.

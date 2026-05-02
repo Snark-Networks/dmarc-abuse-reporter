@@ -59,24 +59,33 @@ The script expects specific column header names in each input file. If your DMAR
 
 ```python
 SOURCE_COLS = {
-    "source_ip":   "source_ip",    # <-- change right-hand values to match your headers
-    "count":       "count",
-    "header_from": "header_from",
-    "disposition": "disposition",
+    "source_ip":   "IP Address",   # <-- change right-hand values to match your headers
+    "base_domain": "Base Domain",
+    "country":     "Country",
+    "count":       "Messages",
 }
 
 SPF_COLS = {
-    "source_ip":     "source_ip",
-    "envelope_from": "envelope_from",
-    "spf_result":    "spf_result",
+    "header_from":      "Header From",
+    "envelope_from":    "Envelope From",
+    "spf_result":       "SPF Result",
+    "spf_aligned":      "SPF Aligned",
+    "reverse_dns_base": "Reverse DNS Base",
+    "count":            "Messages",
 }
 
 DKIM_COLS = {
-    "source_ip":   "source_ip",
-    "dkim_domain": "dkim_domain",
-    "dkim_result": "dkim_result",
+    "header_from":      "Header From",
+    "dkim_selector":    "DKIM Selector",
+    "dkim_domain":      "DKIM Domain",
+    "dkim_result":      "DKIM Result",
+    "dkim_aligned":     "DKIM Aligned",
+    "reverse_dns_base": "Reverse DNS Base",
+    "count":            "Messages",
 }
 ```
+
+The join key is `source["Base Domain"]` matched against `spf["Reverse DNS Base"]` and `dkim["Reverse DNS Base"]`. There is no IP address column in the SPF or DKIM files; `Header From` (the spoofed domain) is sourced from those files rather than from the source file.
 
 ---
 
@@ -108,9 +117,11 @@ Place all three input files in the `reports/` directory before running. The dire
 
 | File | Required columns |
 |------|-----------------|
-| `_source.csv` | `source_ip`, `count`, `header_from`, `disposition` |
-| `_spf.csv` | `source_ip`, `envelope_from`, `spf_result` |
-| `_dkim.csv` | `source_ip`, `dkim_domain`, `dkim_result` |
+| `_source.csv` | `IP Address`, `Base Domain`, `Country`, `Messages` |
+| `_spf.csv` | `Header From`, `Envelope From`, `SPF Result`, `SPF Aligned`, `Reverse DNS Base`, `Messages` |
+| `_dkim.csv` | `Header From`, `DKIM Selector`, `DKIM Domain`, `DKIM Result`, `DKIM Aligned`, `Reverse DNS Base`, `Messages` |
+
+**Join key:** `source["Base Domain"]` is matched against `spf["Reverse DNS Base"]` and `dkim["Reverse DNS Base"]`. The spoofed domain (`Header From`) is pulled from the SPF/DKIM files. A live reverse-DNS lookup is performed for each source IP even though `_source.csv` already contains a `Reverse DNS` column, because PTR records can change between the time the report was generated and now.
 
 ### Output: `_full.csv` columns
 
@@ -119,12 +130,13 @@ Place all three input files in the `reports/` directory before running. The dire
 | `source_ip` | Sending IP address |
 | `header_from` | Spoofed domain(s), pipe-separated if multiple |
 | `message_count` | Total messages from this IP in the report |
-| `reverse_dns` | PTR record for the IP, or `N/A` |
+| `country` | Country code from the source report |
+| `reverse_dns` | Live PTR record for the IP (looked up at run time), or `N/A` |
 | `abuse_email` | Abuse contact found via WHOIS, or `UNKNOWN` |
 | `rir` | Regional Internet Registry (ARIN, RIPE, APNIC, etc.) |
 | `org_name` | Network/org name from WHOIS |
 | `asn` | Autonomous System Number |
-| `envelope_senders` | Envelope-From domains seen, pipe-separated |
+| `envelope_senders` | Envelope-From domains with message counts, pipe-separated as `domain:count` |
 | `spf_results` | SPF result values seen, pipe-separated |
 | `dkim_domains` | DKIM signing domains seen, pipe-separated |
 | `dkim_results` | DKIM result values seen, pipe-separated |

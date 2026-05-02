@@ -11,9 +11,11 @@ Usage:
     python dmarc_reporter.py 2MAY2026 --skip-lookup   # reuse existing full CSV
 
 Expected input files in the reports/ directory:
-    <date_prefix>_source.csv  — columns: source_ip, count, header_from, disposition
-    <date_prefix>_spf.csv     — columns: source_ip, envelope_from, spf_result
-    <date_prefix>_dkim.csv    — columns: source_ip, dkim_domain, dkim_result
+    <date_prefix>_source.csv  — columns: IP Address, Reverse DNS, Base Domain, Country, Messages
+    <date_prefix>_spf.csv     — columns: Header From, Envelope From, SPF Result, SPF Aligned, Reverse DNS Base, Messages
+    <date_prefix>_dkim.csv    — columns: Header From, DKIM Selector, DKIM Domain, DKIM Result, DKIM Aligned, Reverse DNS Base, Messages
+
+Join key: source["Base Domain"] == spf/dkim["Reverse DNS Base"]
 
 Output files:
     reports/<date_prefix>_full.csv
@@ -125,22 +127,29 @@ REPORTS_DIR = "reports"
 
 # Adjust the column names below to match your DMARC tool's CSV export headers.
 SOURCE_COLS = {
-    "source_ip":   "source_ip",    # Sending IP address
-    "count":       "count",        # Message count
-    "header_from": "header_from",  # Domain in RFC5322 Header-From field
-    "disposition": "disposition",  # DMARC result: none / quarantine / reject
+    "source_ip":   "IP Address",   # Sending IP address
+    "base_domain": "Base Domain",  # rDNS base domain (join key for SPF/DKIM)
+    "country":     "Country",      # Country code from geo-IP
+    "count":       "Messages",     # Total message count from this IP
 }
 
 SPF_COLS = {
-    "source_ip":     "source_ip",     # Sending IP (join key)
-    "envelope_from": "envelope_from", # MAIL FROM / envelope sender domain
-    "spf_result":    "spf_result",    # pass / fail / softfail / neutral / none
+    "header_from":      "Header From",      # Spoofed domain (RFC5322 From)
+    "envelope_from":    "Envelope From",    # MAIL FROM / envelope sender domain
+    "spf_result":       "SPF Result",       # pass / fail / softfail / neutral / none
+    "spf_aligned":      "SPF Aligned",      # yes / no
+    "reverse_dns_base": "Reverse DNS Base", # Join key matching source Base Domain
+    "count":            "Messages",         # Message count for this row
 }
 
 DKIM_COLS = {
-    "source_ip":   "source_ip",   # Sending IP (join key)
-    "dkim_domain": "dkim_domain", # DKIM d= signing domain
-    "dkim_result": "dkim_result", # pass / fail / none
+    "header_from":      "Header From",      # Spoofed domain (RFC5322 From)
+    "dkim_selector":    "DKIM Selector",    # DKIM selector (s=)
+    "dkim_domain":      "DKIM Domain",      # DKIM signing domain (d=)
+    "dkim_result":      "DKIM Result",      # pass / fail / none
+    "dkim_aligned":     "DKIM Aligned",     # yes / no
+    "reverse_dns_base": "Reverse DNS Base", # Join key matching source Base Domain
+    "count":            "Messages",         # Message count for this row
 }
 
 # Days before the same IP can be reported again
@@ -392,7 +401,7 @@ def save_history(path: Path, history: dict) -> None:
 # =============================================================================
 
 FULL_CSV_FIELDS = [
-    "source_ip", "header_from", "message_count", "reverse_dns",
+    "source_ip", "header_from", "message_count", "country", "reverse_dns",
     "abuse_email", "rir", "org_name", "asn",
     "envelope_senders", "spf_results", "dkim_domains", "dkim_results",
 ]
@@ -400,29 +409,34 @@ FULL_CSV_FIELDS = [
 
 def correlate(source_rows: list, spf_rows: list, dkim_rows: list) -> dict:
     """
-    Join the three CSV row lists on source_ip.
+    Join the three CSV row lists.
+
+    Join key: source["Base Domain"] == spf/dkim["Reverse DNS Base"]
+    header_from is extracted from SPF/DKIM rows, not from source.
+
     Returns a dict keyed by IP with aggregated sets for multi-valued fields.
     """
     spf_idx: dict  = defaultdict(list)
     dkim_idx: dict = defaultdict(list)
 
     for r in spf_rows:
-        ip = (r.get(SPF_COLS["source_ip"]) or "").strip()
-        if ip:
-            spf_idx[ip].append(r)
+        key = (r.get(SPF_COLS["reverse_dns_base"]) or "").strip()
+        if key:
+            spf_idx[key].append(r)
 
     for r in dkim_rows:
-        ip = (r.get(DKIM_COLS["source_ip"]) or "").strip()
-        if ip:
-            dkim_idx[ip].append(r)
+        key = (r.get(DKIM_COLS["reverse_dns_base"]) or "").strip()
+        if key:
+            dkim_idx[key].append(r)
 
     combined: dict = {}
 
     for row in source_rows:
-        ip          = (row.get(SOURCE_COLS["source_ip"])   or "").strip()
-        hfrom       = (row.get(SOURCE_COLS["header_from"]) or "").strip()
-        raw_count   = row.get(SOURCE_COLS["count"], "0") or "0"
-        count       = int(raw_count) if str(raw_count).isdigit() else 0
+        ip        = (row.get(SOURCE_COLS["source_ip"])   or "").strip()
+        base_dom  = (row.get(SOURCE_COLS["base_domain"]) or "").strip()
+        country   = (row.get(SOURCE_COLS["country"])     or "").strip()
+        raw_count = row.get(SOURCE_COLS["count"], "0") or "0"
+        count     = int(raw_count) if str(raw_count).isdigit() else 0
 
         if not ip:
             continue
@@ -430,32 +444,42 @@ def correlate(source_rows: list, spf_rows: list, dkim_rows: list) -> dict:
         if ip not in combined:
             combined[ip] = {
                 "source_ip":        ip,
+                "base_domain":      base_dom,
+                "country":          country,
                 "header_from":      set(),
                 "message_count":    0,
-                "envelope_senders": set(),
+                "envelope_senders": {},   # domain -> message count
                 "spf_results":      set(),
                 "dkim_domains":     set(),
                 "dkim_results":     set(),
             }
 
-        if hfrom:
-            combined[ip]["header_from"].add(hfrom)
         combined[ip]["message_count"] += count
 
-        for sr in spf_idx.get(ip, []):
-            ef  = (sr.get(SPF_COLS["envelope_from"]) or "").strip()
-            res = (sr.get(SPF_COLS["spf_result"])    or "").strip()
+        for sr in spf_idx.get(base_dom, []):
+            hf        = (sr.get(SPF_COLS["header_from"])   or "").strip()
+            ef        = (sr.get(SPF_COLS["envelope_from"]) or "").strip()
+            res       = (sr.get(SPF_COLS["spf_result"])    or "").strip()
+            raw_sc    = sr.get(SPF_COLS["count"], "0") or "0"
+            spf_count = int(raw_sc) if str(raw_sc).isdigit() else 0
+            if hf:
+                combined[ip]["header_from"].add(hf)
             if ef:
-                combined[ip]["envelope_senders"].add(ef)
+                combined[ip]["envelope_senders"][ef] = (
+                    combined[ip]["envelope_senders"].get(ef, 0) + spf_count
+                )
             if res:
                 combined[ip]["spf_results"].add(res)
 
-        for dr in dkim_idx.get(ip, []):
-            dom = (dr.get(DKIM_COLS["dkim_domain"]) or "").strip()
-            res = (dr.get(DKIM_COLS["dkim_result"]) or "").strip()
-            if dom:
+        for dr in dkim_idx.get(base_dom, []):
+            hf  = (dr.get(DKIM_COLS["header_from"]) or "").strip()
+            dom = (dr.get(DKIM_COLS["dkim_domain"])  or "").strip()
+            res = (dr.get(DKIM_COLS["dkim_result"])  or "").strip()
+            if hf:
+                combined[ip]["header_from"].add(hf)
+            if dom and dom != "__missing__":
                 combined[ip]["dkim_domains"].add(dom)
-            if res:
+            if res and res != "__missing__":
                 combined[ip]["dkim_results"].add(res)
 
     return combined
@@ -497,12 +521,15 @@ def build_full_report(combined: dict) -> list:
             "source_ip":        ip,
             "header_from":      "|".join(header_from_list),
             "message_count":    data["message_count"],
+            "country":          data.get("country", ""),
             "reverse_dns":      c["reverse_dns"],
             "abuse_email":      c["abuse_email"],
             "rir":              c["rir"],
             "org_name":         c["org_name"],
             "asn":              c["asn"],
-            "envelope_senders": "|".join(sorted(data["envelope_senders"])),
+            "envelope_senders": "|".join(
+                f"{d}:{c}" for d, c in sorted(data["envelope_senders"].items())
+            ),
             "spf_results":      "|".join(sorted(data["spf_results"])),
             "dkim_domains":     "|".join(sorted(data["dkim_domains"])),
             "dkim_results":     "|".join(sorted(data["dkim_results"])),
@@ -529,8 +556,19 @@ def format_email(row: dict, subject_tmpl: str, body_tmpl: str, cfg: dict) -> tup
     # Use the first domain alphabetically when multiple header_from values exist
     header_from = row["header_from"].split("|")[0]
 
-    senders = sorted(s for s in row["envelope_senders"].split("|") if s)
-    env_block = "\n".join(f"  - {s}" for s in senders) if senders else "  (none recorded)"
+    parsed_senders = []
+    for entry in (s for s in row["envelope_senders"].split("|") if s):
+        if ":" in entry:
+            domain, _, raw_count = entry.rpartition(":")
+            parsed_senders.append((domain, int(raw_count) if raw_count.isdigit() else 0))
+        else:
+            parsed_senders.append((entry, 0))
+    parsed_senders.sort(key=lambda x: -x[1])
+    env_lines = [
+        f"  - {d} ({c} messages)" if c else f"  - {d}"
+        for d, c in parsed_senders
+    ]
+    env_block = "\n".join(env_lines) if env_lines else "  (none recorded)"
 
     values = dict(
         # Per-IP data from the full CSV
