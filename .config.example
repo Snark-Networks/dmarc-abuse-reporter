@@ -46,7 +46,7 @@ org   = Your Organisation Name (ASxxxxx)
 #
 # Examples:
 #   prefixes =
-#       192.0.2.0/24
-#       198.51.100.5/32
-#       2001:db8::/32
+#       10.0.0.0/8
+#       192.168.1.0/24
+#       fd00::/8
 prefixes =

@@ -47,9 +47,9 @@ org   = Your Organisation Name (ASxxxxx)
 [ignore]
 ; CIDR prefixes to exclude from reports (one per line, indented)
 prefixes =
-    192.0.2.0/24
-    198.51.100.5/32
-    2001:db8::/32
+    10.0.0.0/8
+    192.168.1.0/24
+    fd00::/8
 ```
 
 `.config` is listed in `.gitignore` and will never be accidentally committed. The script checks permissions on POSIX systems and refuses to start if the file is readable by group or others.
