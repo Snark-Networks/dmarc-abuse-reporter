@@ -68,35 +68,34 @@ export SMTP_PASSWORD="yourpassword"
 
 ## CSV Column Names
 
-The script expects specific column header names in each input file. If your DMARC tool exports different names, update the three column-mapping dicts near the top of the script:
+The script expects specific column header names in each input file. If your DMARC tool exports different names, add the relevant section(s) to `.config` and change the right-hand values:
 
-```python
-SOURCE_COLS = {
-    "source_ip":   "IP Address",   # <-- change right-hand values to match your headers
-    "base_domain": "Base Domain",
-    "country":     "Country",
-    "count":       "Messages",
-}
+```ini
+[source_cols]
+source_ip   = IP Address   ; <-- change right-hand values to match your headers
+base_domain = Base Domain
+country     = Country
+count       = Messages
 
-SPF_COLS = {
-    "header_from":      "Header From",
-    "envelope_from":    "Envelope From",
-    "spf_result":       "SPF Result",
-    "spf_aligned":      "SPF Aligned",
-    "reverse_dns_base": "Reverse DNS Base",
-    "count":            "Messages",
-}
+[spf_cols]
+header_from      = Header From
+envelope_from    = Envelope From
+spf_result       = SPF Result
+spf_aligned      = SPF Aligned
+reverse_dns_base = Reverse DNS Base
+count            = Messages
 
-DKIM_COLS = {
-    "header_from":      "Header From",
-    "dkim_selector":    "DKIM Selector",
-    "dkim_domain":      "DKIM Domain",
-    "dkim_result":      "DKIM Result",
-    "dkim_aligned":     "DKIM Aligned",
-    "reverse_dns_base": "Reverse DNS Base",
-    "count":            "Messages",
-}
+[dkim_cols]
+header_from      = Header From
+dkim_selector    = DKIM Selector
+dkim_domain      = DKIM Domain
+dkim_result      = DKIM Result
+dkim_aligned     = DKIM Aligned
+reverse_dns_base = Reverse DNS Base
+count            = Messages
 ```
+
+These sections are optional — omitting them uses the defaults shown above. The left-hand keys are internal names used by the script and must not be changed.
 
 The join key is `source["Base Domain"]` matched against `spf["Reverse DNS Base"]` and `dkim["Reverse DNS Base"]`. There is no IP address column in the SPF or DKIM files; `Header From` (the spoofed domain) is sourced from those files rather than from the source file.
 
@@ -272,17 +271,19 @@ source_ip,last_reported_date
 
 ## Adjustable Settings
 
-Identity, credentials, and ignore prefixes live in `.config`. Everything else is in the `CONFIGURATION` section near the top of `dmarc_reporter.py`:
+All settings live in `.config`. Nothing needs to be edited in the script itself.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `.config` `[smtp]` | *(see above)* | Mail server and SMTP sender address |
-| `.config` `[reporter]` | *(see above)* | Your name, contact email, and org name (appear in email body) |
-| `.config` `[ignore]` | *(empty)* | CIDR prefixes to exclude from all reports |
-| `REPORTS_DIR` | `reports` | Directory containing all report files |
-| `SOURCE_COLS` / `SPF_COLS` / `DKIM_COLS` | *(see above)* | CSV column name mappings |
-| `REPORT_COOLDOWN_DAYS` | `30` | Days before re-reporting the same IP |
-| `WHOIS_DELAY` | `2.0` | Seconds between WHOIS queries |
+| `[smtp]` | *(see above)* | Mail server and SMTP sender address |
+| `[reporter]` | *(see above)* | Your name, contact email, and org name (appear in email body) |
+| `[ignore]` `prefixes` | *(empty)* | CIDR prefixes to exclude from all reports |
+| `[settings]` `reports_dir` | `reports` | Directory containing all report files |
+| `[settings]` `cooldown_days` | `30` | Days before re-reporting the same IP |
+| `[settings]` `whois_delay` | `2.0` | Seconds between WHOIS queries |
+| `[source_cols]` | *(see above)* | Column name mappings for the source CSV |
+| `[spf_cols]` | *(see above)* | Column name mappings for the SPF CSV |
+| `[dkim_cols]` | *(see above)* | Column name mappings for the DKIM CSV |
 
 ---
 

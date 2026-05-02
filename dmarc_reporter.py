@@ -88,7 +88,8 @@ def is_ignored(ip_str: str, ignore_prefixes: list) -> bool:
 def load_config() -> dict:
     """
     Read all settings from .config (INI format).
-    Sections: [smtp], [reporter], [ignore]
+    Required sections: [smtp], [reporter]
+    Optional sections: [ignore], [settings], [source_cols], [spf_cols], [dkim_cols]
     Aborts with a clear message if the file is missing or malformed.
     The SMTP_PASSWORD environment variable overrides the password field.
     """
@@ -163,48 +164,55 @@ def load_config() -> dict:
         print("ERROR: .config [reporter] org is empty.")
         sys.exit(1)
 
+    # [settings] — operational parameters; all are optional with built-in defaults
+    st = cp["settings"] if "settings" in cp else {}
+    try:
+        cfg["reports_dir"]   = st.get("reports_dir", "reports").strip() or "reports"
+        cfg["cooldown_days"] = int(st.get("cooldown_days", "30"))
+        cfg["whois_delay"]   = float(st.get("whois_delay", "2.0"))
+    except (ValueError, configparser.Error) as exc:
+        print(f"ERROR: Could not parse .config [settings]: {exc}")
+        sys.exit(1)
+
+    # Column name mappings — each section is optional; defaults match the standard
+    # DMARC reporting tool export headers. Override only if your tool uses different
+    # column names. Only keys present in the section override the default; omitted
+    # keys retain their default value.
+    def _load_cols(section_name: str, defaults: dict) -> dict:
+        if section_name not in cp:
+            return dict(defaults)
+        result = dict(defaults)
+        for key in defaults:
+            val = cp[section_name].get(key, "").strip()
+            if val:
+                result[key] = val
+        return result
+
+    cfg["source_cols"] = _load_cols("source_cols", {
+        "source_ip":   "IP Address",
+        "base_domain": "Base Domain",
+        "country":     "Country",
+        "count":       "Messages",
+    })
+    cfg["spf_cols"] = _load_cols("spf_cols", {
+        "header_from":      "Header From",
+        "envelope_from":    "Envelope From",
+        "spf_result":       "SPF Result",
+        "spf_aligned":      "SPF Aligned",
+        "reverse_dns_base": "Reverse DNS Base",
+        "count":            "Messages",
+    })
+    cfg["dkim_cols"] = _load_cols("dkim_cols", {
+        "header_from":      "Header From",
+        "dkim_selector":    "DKIM Selector",
+        "dkim_domain":      "DKIM Domain",
+        "dkim_result":      "DKIM Result",
+        "dkim_aligned":     "DKIM Aligned",
+        "reverse_dns_base": "Reverse DNS Base",
+        "count":            "Messages",
+    })
+
     return cfg
-
-
-# =============================================================================
-# CONFIGURATION — Edit this section before running
-# =============================================================================
-
-# Directory where all report files are stored
-REPORTS_DIR = "reports"
-
-# Adjust the column names below to match your DMARC tool's CSV export headers.
-SOURCE_COLS = {
-    "source_ip":   "IP Address",   # Sending IP address
-    "base_domain": "Base Domain",  # rDNS base domain (join key for SPF/DKIM)
-    "country":     "Country",      # Country code from geo-IP
-    "count":       "Messages",     # Total message count from this IP
-}
-
-SPF_COLS = {
-    "header_from":      "Header From",      # Spoofed domain (RFC5322 From)
-    "envelope_from":    "Envelope From",    # MAIL FROM / envelope sender domain
-    "spf_result":       "SPF Result",       # pass / fail / softfail / neutral / none
-    "spf_aligned":      "SPF Aligned",      # yes / no
-    "reverse_dns_base": "Reverse DNS Base", # Join key matching source Base Domain
-    "count":            "Messages",         # Message count for this row
-}
-
-DKIM_COLS = {
-    "header_from":      "Header From",      # Spoofed domain (RFC5322 From)
-    "dkim_selector":    "DKIM Selector",    # DKIM selector (s=)
-    "dkim_domain":      "DKIM Domain",      # DKIM signing domain (d=)
-    "dkim_result":      "DKIM Result",      # pass / fail / none
-    "dkim_aligned":     "DKIM Aligned",     # yes / no
-    "reverse_dns_base": "Reverse DNS Base", # Join key matching source Base Domain
-    "count":            "Messages",         # Message count for this row
-}
-
-# Days before the same IP can be reported again
-REPORT_COOLDOWN_DAYS = 30
-
-# Seconds to wait between WHOIS queries (courtesy rate limiting)
-WHOIS_DELAY = 2.0
 
 
 # =============================================================================
@@ -462,7 +470,8 @@ FULL_CSV_FIELDS = [
 ]
 
 
-def correlate(source_rows: list, spf_rows: list, dkim_rows: list) -> dict:
+def correlate(source_rows: list, spf_rows: list, dkim_rows: list,
+              source_cols: dict, spf_cols: dict, dkim_cols: dict) -> dict:
     """
     Join the three CSV row lists.
 
@@ -475,22 +484,22 @@ def correlate(source_rows: list, spf_rows: list, dkim_rows: list) -> dict:
     dkim_idx: dict = defaultdict(list)
 
     for r in spf_rows:
-        key = (r.get(SPF_COLS["reverse_dns_base"]) or "").strip()
+        key = (r.get(spf_cols["reverse_dns_base"]) or "").strip()
         if key:
             spf_idx[key].append(r)
 
     for r in dkim_rows:
-        key = (r.get(DKIM_COLS["reverse_dns_base"]) or "").strip()
+        key = (r.get(dkim_cols["reverse_dns_base"]) or "").strip()
         if key:
             dkim_idx[key].append(r)
 
     combined: dict = {}
 
     for row in source_rows:
-        ip        = (row.get(SOURCE_COLS["source_ip"])   or "").strip()
-        base_dom  = (row.get(SOURCE_COLS["base_domain"]) or "").strip()
-        country   = (row.get(SOURCE_COLS["country"])     or "").strip()
-        raw_count = row.get(SOURCE_COLS["count"], "0") or "0"
+        ip        = (row.get(source_cols["source_ip"])   or "").strip()
+        base_dom  = (row.get(source_cols["base_domain"]) or "").strip()
+        country   = (row.get(source_cols["country"])     or "").strip()
+        raw_count = row.get(source_cols["count"], "0") or "0"
         count     = int(raw_count) if str(raw_count).isdigit() else 0
 
         if not ip:
@@ -512,10 +521,10 @@ def correlate(source_rows: list, spf_rows: list, dkim_rows: list) -> dict:
         combined[ip]["message_count"] += count
 
         for sr in spf_idx.get(base_dom, []):
-            hf        = (sr.get(SPF_COLS["header_from"])   or "").strip()
-            ef        = (sr.get(SPF_COLS["envelope_from"]) or "").strip()
-            res       = (sr.get(SPF_COLS["spf_result"])    or "").strip()
-            raw_sc    = sr.get(SPF_COLS["count"], "0") or "0"
+            hf        = (sr.get(spf_cols["header_from"])   or "").strip()
+            ef        = (sr.get(spf_cols["envelope_from"]) or "").strip()
+            res       = (sr.get(spf_cols["spf_result"])    or "").strip()
+            raw_sc    = sr.get(spf_cols["count"], "0") or "0"
             spf_count = int(raw_sc) if str(raw_sc).isdigit() else 0
             if hf:
                 combined[ip]["header_from"].add(hf)
@@ -527,9 +536,9 @@ def correlate(source_rows: list, spf_rows: list, dkim_rows: list) -> dict:
                 combined[ip]["spf_results"].add(res)
 
         for dr in dkim_idx.get(base_dom, []):
-            hf  = (dr.get(DKIM_COLS["header_from"]) or "").strip()
-            dom = (dr.get(DKIM_COLS["dkim_domain"])  or "").strip()
-            res = (dr.get(DKIM_COLS["dkim_result"])  or "").strip()
+            hf  = (dr.get(dkim_cols["header_from"]) or "").strip()
+            dom = (dr.get(dkim_cols["dkim_domain"])  or "").strip()
+            res = (dr.get(dkim_cols["dkim_result"])  or "").strip()
             if hf:
                 combined[ip]["header_from"].add(hf)
             if dom and dom != "__missing__":
@@ -540,7 +549,7 @@ def correlate(source_rows: list, spf_rows: list, dkim_rows: list) -> dict:
     return combined
 
 
-def build_full_report(combined: dict) -> list:
+def build_full_report(combined: dict, whois_delay: float) -> list:
     """
     Perform rDNS and WHOIS lookups for every unique IP and return a list
     of flat dicts suitable for writing to the full CSV.
@@ -554,7 +563,7 @@ def build_full_report(combined: dict) -> list:
         rdns = get_reverse_dns(ip)
         time.sleep(0.3)
         info = get_whois_info(ip)
-        time.sleep(WHOIS_DELAY)
+        time.sleep(whois_delay)
         ip_cache[ip] = {
             "reverse_dns": rdns,
             "abuse_email": info["abuse_email"] or "UNKNOWN",
@@ -745,7 +754,7 @@ def main() -> None:
     else:
         test_smtp_connection(cfg)
 
-    rdir      = Path(REPORTS_DIR)
+    rdir      = Path(cfg["reports_dir"])
     rdir.mkdir(exist_ok=True)
 
     src_path   = rdir / f"{prefix}_source.csv"
@@ -779,10 +788,11 @@ def main() -> None:
             f"DKIM: {len(dkim_rows)} row(s)"
         )
 
-        combined  = correlate(src_rows, spf_rows, dkim_rows)
+        combined  = correlate(src_rows, spf_rows, dkim_rows,
+                              cfg["source_cols"], cfg["spf_cols"], cfg["dkim_cols"])
         print(f"[*] Correlated into {len(combined)} unique source IP(s)")
 
-        full_rows = build_full_report(combined)
+        full_rows = build_full_report(combined, cfg["whois_delay"])
 
         with open(full_path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=FULL_CSV_FIELDS)
@@ -812,7 +822,7 @@ def main() -> None:
     else:
         print("[*] No history file found — this appears to be the first run")
 
-    cutoff    = datetime.now() - timedelta(days=REPORT_COOLDOWN_DAYS)
+    cutoff    = datetime.now() - timedelta(days=cfg["cooldown_days"])
     to_report = []
     skipped   = []
 
@@ -827,7 +837,7 @@ def main() -> None:
     if skipped:
         print(
             f"\n[*] Skipping {len(skipped)} IP(s) reported within the last "
-            f"{REPORT_COOLDOWN_DAYS} days:"
+            f"{cfg['cooldown_days']} days:"
         )
         for ip, dt in skipped:
             print(f"    {ip}  (last reported {dt.strftime('%Y-%m-%d')})")

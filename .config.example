@@ -50,3 +50,46 @@ org   = Your Organisation Name (ASxxxxx)
 #       192.168.1.0/24
 #       fd00::/8
 prefixes =
+
+[settings]
+
+# Directory where input, output, and history files are kept.
+# Can be relative (to the script) or absolute. Created automatically.
+reports_dir   = reports
+
+# Days before the same source IP can appear in a new report.
+cooldown_days = 30
+
+# Seconds to wait between WHOIS queries (courtesy rate-limiting).
+whois_delay   = 2.0
+
+[source_cols]
+
+# Column header names in your <prefix>_source.csv export.
+# Change the right-hand values only if your DMARC tool uses different headers.
+# The left-hand keys are internal names — never change them.
+source_ip   = IP Address
+base_domain = Base Domain
+country     = Country
+count       = Messages
+
+[spf_cols]
+
+# Column header names in your <prefix>_spf.csv export.
+header_from      = Header From
+envelope_from    = Envelope From
+spf_result       = SPF Result
+spf_aligned      = SPF Aligned
+reverse_dns_base = Reverse DNS Base
+count            = Messages
+
+[dkim_cols]
+
+# Column header names in your <prefix>_dkim.csv export.
+header_from      = Header From
+dkim_selector    = DKIM Selector
+dkim_domain      = DKIM Domain
+dkim_result      = DKIM Result
+dkim_aligned     = DKIM Aligned
+reverse_dns_base = Reverse DNS Base
+count            = Messages

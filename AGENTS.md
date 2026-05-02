@@ -88,7 +88,7 @@ Do not collapse or reorder this strategy. The tiered approach is intentional —
 
 ## Configuration Locations
 
-**All credentials, identity, and ignore rules** — `.config` (INI format, three sections). Gitignored, never committed. `.config.example` is the committed template. Edit `.config` only; do not put credentials or identity back into the script.
+**All settings** — `.config` (INI format, seven sections). Gitignored, never committed. `.config.example` is the committed template. Edit `.config` only; do not hardcode credentials, identity, or settings back into the script.
 
 `[smtp]` fields:
 
@@ -113,12 +113,15 @@ Do not collapse or reorder this strategy. The tiered approach is intentional —
 |-----|---------|
 | `prefixes` | Multi-line list of CIDR prefixes (IPv4 or IPv6) to exclude from all reports |
 
-**All other settings** — `CONFIGURATION` section of `dmarc_reporter.py`:
+`[settings]` fields (all optional; built-in defaults shown):
 
-- `REPORTS_DIR` — defaults to `"reports"`
-- `SOURCE_COLS`, `SPF_COLS`, `DKIM_COLS` — CSV column name mappings
-- `REPORT_COOLDOWN_DAYS` — default 30
-- `WHOIS_DELAY` — default 2.0 seconds
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `reports_dir` | `reports` | Directory for input, output, and history files |
+| `cooldown_days` | `30` | Days before re-reporting the same IP |
+| `whois_delay` | `2.0` | Seconds between WHOIS queries |
+
+`[source_cols]`, `[spf_cols]`, `[dkim_cols]` — CSV column name mappings (all optional; omit entirely to use the defaults). Right-hand values are the actual CSV headers from your DMARC tool. Left-hand keys are internal script names and must never change.
 
 ---
 
@@ -167,13 +170,13 @@ Add CIDR prefixes to the `prefixes` key under `[ignore]` in `.config`, one per l
 Run with `--dry-run`. All lookups, CSV output, prompts, and email previews behave normally; only the actual `sendmail` call and history update are suppressed.
 
 **Operator wants to change the cooldown period**
-Edit `REPORT_COOLDOWN_DAYS` in the configuration block.
+Edit `cooldown_days` under `[settings]` in `.config`.
 
 **Operator wants to adjust the email body or subject**
 Edit `email_template.txt`. No script changes needed. The first line is the subject; everything after the first blank line is the body. Keep all six `{placeholder}` names intact, or update `format_email()` accordingly.
 
 **Operator's DMARC tool uses different CSV column names**
-Update the right-hand values in `SOURCE_COLS`, `SPF_COLS`, and/or `DKIM_COLS`. The left-hand keys are internal names used by the script and must not change. The join is on `source["Base Domain"]` == `spf/dkim["Reverse DNS Base"]`; if those column names change, update both `SOURCE_COLS["base_domain"]` and `SPF_COLS["reverse_dns_base"]` / `DKIM_COLS["reverse_dns_base"]` together.
+Add `[source_cols]`, `[spf_cols]`, and/or `[dkim_cols]` sections to `.config` and set the right-hand values to match. The left-hand keys are internal names used by the script and must not change. The join is on `source["Base Domain"]` == `spf/dkim["Reverse DNS Base"]`; if those column names change, update both `source_cols.base_domain` and `spf_cols.reverse_dns_base` / `dkim_cols.reverse_dns_base` together.
 
 **An IP's abuse contact was not found (shows UNKNOWN) or fails the email validation check**
 The operator can manually edit the `abuse_email` field in `_full.csv` and re-run with `--skip-lookup`. Alternatively, extend `_parse_abuse_email()` to handle a new whois field pattern for the specific RIR.
