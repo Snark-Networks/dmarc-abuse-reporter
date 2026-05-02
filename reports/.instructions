@@ -1,18 +1,25 @@
 This directory holds all input, output, and history files for dmarc_reporter.py.
 
 INPUT FILES — place these here before running the script:
-  <prefix>_source.csv     Source IP addresses, message counts, header-from domains,
-                          and DMARC dispositions exported from your reporting tool.
-  <prefix>_spf.csv        SPF results per source IP (envelope-from, spf_result).
-  <prefix>_dkim.csv       DKIM results per source IP (dkim_domain, dkim_result).
+  <prefix>_source.csv     One row per source IP: IP address, message count,
+                          base domain (rDNS base, used as the join key),
+                          and country code.
+  <prefix>_spf.csv        SPF results per rDNS base domain: header-from (spoofed
+                          domain), envelope-from, SPF result, SPF aligned, and
+                          Reverse DNS Base (join key).
+  <prefix>_dkim.csv       DKIM results per rDNS base domain: header-from (spoofed
+                          domain), DKIM selector, DKIM domain, DKIM result, DKIM
+                          aligned, and Reverse DNS Base (join key).
 
   The prefix is the date string you pass on the command line, e.g. 2MAY2026.
+  Join key: source["Base Domain"] == spf/dkim["Reverse DNS Base"]
 
 OUTPUT FILES — written by the script:
-  <prefix>_full.csv       Correlated report: all three input files joined on source_ip,
-                          enriched with rDNS and WHOIS data (abuse email, RIR, org, ASN).
+  <prefix>_full.csv       Correlated report: all three input files joined on
+                          Base Domain / Reverse DNS Base, enriched with live
+                          rDNS and WHOIS data (abuse email, RIR, org, ASN).
   Report_History.csv      Persistent record of the last date each IP was reported.
-                          Used to enforce the 30-day cooldown between reports for the
-                          same IP. Created automatically on the first run.
+                          Used to enforce the 30-day cooldown between reports for
+                          the same IP. Created automatically on the first run.
 
 NOTE: All *.csv files are excluded from version control. Only this file is committed.

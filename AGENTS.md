@@ -27,8 +27,8 @@ dmarc-abuse-reporter/
 ├── email_template.txt      ← abuse email subject + body; edit freely, no script changes needed
 ├── requirements.txt        ← pip dependencies (ipwhois>=1.3.0)
 ├── LICENSE                 ← MIT
-├── .smtp_config.example    ← committed template; copy to .smtp_config to use
-├── .smtp_config            ← NOT committed (in .gitignore); real credentials + identity
+├── .config.example         ← committed template; copy to .config to use
+├── .config                 ← NOT committed (in .gitignore); real credentials + identity
 ├── .gitignore
 ├── README.md               ← user-facing documentation
 ├── AGENTS.md               ← this file
@@ -68,9 +68,9 @@ Do not collapse or reorder this strategy. The tiered approach is intentional —
 
 **`header_from` in the email template uses the first domain alphabetically** when multiple are present for one IP. This is a simplification; a future enhancement could send separate emails per domain.
 
-**SMTP credentials and reporter identity live in `.smtp_config`, not the script.** `load_smtp_config()` reads the INI file (`[smtp]` section) at the start of `main()` and returns a dict passed as `cfg` to `send_email()` and `format_email()`. Fields sourced from this file: `host`, `port`, `use_starttls`, `use_ssl`, `username`, `password`, `sender_name`, `sender_email`, `org_name`. The `SMTP_PASSWORD` environment variable overrides the password field. The sentinel check `password != "YOUR_PASSWORD_HERE"` skips auth if the example value was left unchanged.
+**Credentials and identity live in `.config`, not the script.** `load_config()` reads the INI file (sections: `[smtp]`, `[reporter]`, `[ignore]`) at the start of `main()` and returns a `cfg` dict passed to `send_email()` and `format_email()`. `[smtp]` fields: `host`, `port`, `use_starttls`, `use_ssl`, `username`, `password`, `sender_name`, `sender_email`. `[reporter]` fields: `reporter_name`, `reporter_email`, `reporter_org`. The `SMTP_PASSWORD` environment variable overrides the password field. The sentinel check `password != "YOUR_PASSWORD_HERE"` skips auth if the example value was left unchanged.
 
-**`.smtp_config` permissions are enforced on POSIX.** After loading, `load_smtp_config()` checks `st_mode & 0o077`; if any group or other bits are set it prints a `chmod 600` reminder and exits. This check is skipped on Windows (`os.name != "posix"`).
+**`.config` permissions are enforced on POSIX.** `load_config()` checks `st_mode & 0o077`; if any group or other bits are set it prints a `chmod 600` reminder and exits. This check is skipped on Windows (`os.name != "posix"`).
 
 **All values placed in RFC2822 headers are sanitized.** `_sanitize_header()` strips `\r` and `\n` before any value is assigned to `msg["To"]`, `msg["From"]`, or `msg["Subject"]`. `send_email()` additionally calls `_is_valid_email()` on the `To` address and returns an error tuple (rather than attempting the send) if it fails.
 

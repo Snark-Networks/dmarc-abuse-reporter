@@ -406,6 +406,13 @@ def get_whois_info(ip: str) -> dict:
 # CSV UTILITIES
 # =============================================================================
 
+def _safe_int(val, default: int = 0) -> int:
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def read_csv(path: Path) -> list:
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -595,6 +602,11 @@ def _sanitize_header(value: str) -> str:
     return re.sub(r"[\r\n]+", " ", value).strip()
 
 
+def _escape_braces(s) -> str:
+    """Escape literal curly braces so untrusted values are safe inside str.format()."""
+    return str(s).replace("{", "{{").replace("}", "}}")
+
+
 def _is_valid_email(addr: str) -> bool:
     """Return True if addr looks like a plausible single email address."""
     return bool(re.fullmatch(r"[\w.+\-]+@[\w.\-]+\.\w{2,}", addr))
@@ -606,7 +618,7 @@ def format_email(group: dict, subject_tmpl: str, body_tmpl: str, cfg: dict) -> t
 
     ip_lines = []
     for entry in group["ip_entries"]:
-        count = int(entry["message_count"])
+        count = _safe_int(entry.get("message_count", 0))
         suffix = "message" if count == 1 else "messages"
         ip_lines.append(
             f"  - {entry['source_ip']} (rDNS: {entry['reverse_dns']}) — {count} {suffix}"
@@ -619,12 +631,12 @@ def format_email(group: dict, subject_tmpl: str, body_tmpl: str, cfg: dict) -> t
     env_block = "\n".join(env_lines) if env_lines else "  (none recorded)"
 
     values = dict(
-        header_from=header_from,
-        ip_list=ip_list,
-        envelope_senders=env_block,
-        reporter_name=cfg["reporter_name"],
-        org_name=cfg["reporter_org"],
-        contact_email=cfg["reporter_email"],
+        header_from=_escape_braces(header_from),
+        ip_list=_escape_braces(ip_list),
+        envelope_senders=_escape_braces(env_block),
+        reporter_name=_escape_braces(cfg["reporter_name"]),
+        org_name=_escape_braces(cfg["reporter_org"]),
+        contact_email=_escape_braces(cfg["reporter_email"]),
     )
     return subject_tmpl.format(**values), body_tmpl.format(**values)
 
@@ -885,7 +897,7 @@ def main() -> None:
                 for r in rows
             ],
             "total_message_count": sum(
-                int(r.get("message_count", 0)) for r in rows
+                _safe_int(r.get("message_count", 0)) for r in rows
             ),
         })
 
@@ -914,7 +926,7 @@ def main() -> None:
         print(f"\n{SEP}")
         print(f"  IPs:")
         for entry in ip_entries:
-            count = int(entry["message_count"])
+            count = _safe_int(entry.get("message_count", 0))
             suffix = "message" if count == 1 else "messages"
             print(f"    {entry['source_ip']} (rDNS: {entry['reverse_dns']}) — {count} {suffix}")
         print(f"  Organization : {group.get('org_name', 'N/A')}")
